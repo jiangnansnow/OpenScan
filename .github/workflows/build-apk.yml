@@ -1,0 +1,108 @@
+name: Build Chinese APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/build-apk.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build release APK (zh-Hans)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.38.0'
+          cache: true
+
+      - name: Show Flutter version
+        run: flutter --version
+
+      - name: Generate localizations
+        run: flutter gen-l10n
+
+      - name: Verify Chinese locale is wired up
+        run: |
+          set -e
+          test -f lib/l10n/app_zh.arb
+          test -f lib/l10n/app_localizations_zh.dart
+          grep -q "zh" lib/l10n/l10n.dart
+          echo "zh locale files present and referenced in l10n.dart"
+
+      - name: Create keystore for signing
+        run: |
+          set -e
+          mkdir -p $HOME/keys
+          keytool -genkeypair -v \
+            -keystore $HOME/keys/openscan.jks \
+            -alias openscan \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass openscan -keypass openscan \
+            -dname "CN=OpenScan Local Build, OU=Personal, O=OpenScan, L=NA, S=NA, C=CN"
+          cat > android/key.properties <<EOF
+storePassword=openscan
+keyPassword=openscan
+keyAlias=openscan
+storeFile=$HOME/keys/openscan.jks
+EOF
+
+      - name: Build release APK
+        run: flutter build apk --release --split-per-abi
+        env:
+          KEYSTORE_PATH: $HOME/keys/openscan.jks
+
+      - name: Assemble fat APK too
+        run: flutter build apk --release
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openscan-zh-apk
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Attach APK to a rolling release
+        if: startsWith(github.ref, 'refs/heads/master')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/app/outputs/flutter-apk/*.apk
+          tag_name: ci-build
+          name: OpenScan 简体中文版 (自签名构建)
+          body: |
+            由 GitHub Actions 自动构建，源自分支 `master`（已包含简体中文翻译）。
+
+            包含简体中文界面。若系统语言为中文（简体 / 中国大陆 / 新加坡），App 会自动使用中文；
+            语言跟随系统，App 内无法手动切换。
+
+            **注意**：这是自签名包，与 Google Play 上的官方签名不同，无法直接覆盖安装官方版。
+            如已安装官方版，请先卸载再安装此包。
+
+            安装前请确认在系统设置中允许「安装未知来源应用」。
+          draft: false
+          prerelease: true
+          make_latest: false
