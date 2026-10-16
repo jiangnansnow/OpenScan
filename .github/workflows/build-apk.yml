@@ -35,7 +35,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.38.0"
+          flutter-version: "3.47.7"
           cache: true
 
       - name: Show Flutter version
@@ -70,11 +70,22 @@ jobs:
           } > android/key.properties
           cat android/key.properties
 
-      - name: Build release APK
+      - name: Build release APK (per-ABI)
         run: flutter build apk --release --split-per-abi
 
       - name: Build universal APK
+        if: success()
         run: flutter build apk --release
+
+      - name: Fall back to debug build if release failed
+        if: failure()
+        run: |
+          set -e
+          echo "Release build failed; falling back to a debug APK so an installable artifact still exists."
+          flutter build apk --debug
+
+      - name: List built APKs
+        run: ls -lh build/app/outputs/flutter-apk/ || true
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
